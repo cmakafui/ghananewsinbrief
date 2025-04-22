@@ -1,85 +1,79 @@
-# Cloudflare Workflows
+# Ghana News InBrief - Cloudflare Workflows Implementation
 
-This is the starter template for Workflows, a durable execution engine built on top of Cloudflare Workers.
+This implementation uses Cloudflare Workflows to create a durable, multi-step news aggregation system while keeping dependencies lightweight.
 
-* Clone this repository to get started with Workflows
-* Read the [Workflows announcement blog](https://blog.cloudflare.com/building-workflows-durable-execution-on-workers/) to learn more about what Workflows is and how to build durable, multi-step applications using the Workflows model.
-* Review the [Workflows developer documentation](https://developers.cloudflare.com/workflows/) to dive deeper into the Workflows API and how it works.
+## Core Components
 
-## Usage
+### 1. Workflow Structure
 
-**Visit the [get started guide](https://developers.cloudflare.com/workflows/get-started/guide/) for Workflows to create and deploy your first Workflow.**
+Two primary workflows handle the news processing pipeline:
 
-### Deploy it
+- **JoyNewsScraperWorkflow**: Scrapes the MyJoyOnline website and RSS feeds, identifies new articles, and triggers the processor workflow for each new article.
+- **GHNewsProcessorWorkflow**: Processes individual articles, generates summaries using Google Gemini, and sends them to Telegram.
 
-Deploy it to your own Cloudflare account directly:
+### 2. Key Technologies Used
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/workflows-starter)
+- **Cloudflare HTMLRewriter**: Used for HTML parsing on the main page
+- **fast-xml-parser**: A lightweight XML parser for RSS feed processing
+- **ky**: A lightweight HTTP client for fetching content
+- **Cloudflare KV**: For storing processed article information with TTL (auto-expiration)
+- **Google Gemini API**: For AI-powered article summarization
+- **Cloudflare Workflows**: For durable, multi-step execution with automatic retries
 
-You can also create a project using this template by using `npm create cloudflare@latest`:
+### 3. How It Works
 
-```sh
-npm create cloudflare@latest workflows-starter -- --template "cloudflare/workflows-starter"
-```
+1. **Scraper Workflow**:
 
-This will automatically clone this repository, install the dependencies, and prompt you to optionally deploy:
+   - Fetches article links from the MyJoyOnline page using HTMLRewriter
+   - Parses the RSS feed using fast-xml-parser
+   - Identifies unprocessed articles by checking KV storage with prefixed keys
+   - Triggers processor workflows for new articles using efficient batch processing
 
-```sh
-╭ Create an application with Cloudflare Step 1 of 3
-│
-├ In which directory do you want to create your application?
-│ dir ./workflows-tutorial
-│
-├ What would you like to start with?
-│ category Template from a GitHub repo
-│
-├ What's the url of git repo containing the template you'd like to use?
-│ repository cloudflare/workflows-starter
-│
-├ Cloning template from: cloudflare/workflows-starter
-│
-├ template cloned and validated
-│
-├ Copying template files
-│ files copied to project directory
-│
-├ Installing dependencies
-│ installed via `npm install`
-│
-╰ Application created
+2. **Processor Workflow**:
+   - Generates a summary for each article using Google Gemini
+   - Sends the article to Telegram with an image, summary, and link
+   - Stores the article in KV with prefixed keys and TTL for automatic expiration (1 day)
 
-╭ Configuring your application for Cloudflare Step 2 of 3
-│
-├ Installing @cloudflare/workers-types
-│ installed via npm
-│
-├ Adding latest types to `tsconfig.json`
-│ added @cloudflare/workers-types/2023-07-01
-│
-├ Do you want to use git for version control?
-│ yes git
-│
-├ Initializing git repo
-│ initialized git
-│
-├ Committing new files
-│ git commit
-│
-╰ Application configured
+### 4. Key Improvements
 
-╭ Deploy with Cloudflare Step 3 of 3
-│
-├ Do you want to deploy your application?
-│ no deploy via `npm run deploy`
-│
-╰ Done
+- **Batch Processing**: Efficient creation of multiple processor workflows in a single API call
+- **Improved Caching**: KV storage with prefixed keys (`article:`) for better organization
+- **Idempotent Operations**: Enhanced checks to prevent duplicate processing
+- **Proper URL Encoding**: Using `encodeURI()` to handle spaces and special characters in image URLs
+- **Durability**: Reliable execution with automated retries for any failed steps
+- **Auto-expiring Storage**: KV with TTL instead of manual database cleanup
+- **Lightweight Dependencies**: Native APIs and small dependencies
+- **Scheduled Execution**: Built-in cron triggers for periodic scraping (every 10 minutes)
 
-────────────────────────────────────────────────────────────
-🎉  SUCCESS  Application created successfully!
-```
+## File Structure
 
-The [Workflows documentation](https://developers.cloudflare.com/workflows/) contains examples, the API reference, and architecture guidance.
+1. **src/types.ts**: Type definitions for environment variables and workflow parameters
+2. **src/utils.ts**: Utility functions for article summarization, Telegram messaging, and date handling
+3. **src/workflows/joy-news-scraper.ts**: Implementation of the news scraper workflow with RSS parsing
+4. **src/workflows/gh-news-processor.ts**: Implementation of the article processor workflow
+5. **src/index.ts**: HTTP endpoints and scheduled triggers
+6. **wrangler.toml**: Cloudflare Workers configuration
+7. **package.json**: Project dependencies
 
-## License
+## API Endpoints
 
-Copyright 2024, Cloudflare. Apache 2.0 licensed. See the LICENSE file for details.
+(Current endpoints do not support authentication, but this can be added as needed)
+
+- `GET /`: Root endpoint displaying service name
+- `GET /health`: Health check endpoint
+- `POST /api/workflows/scraper`: Manually trigger the news scraper workflow
+- `POST /api/workflows/processor`: Manually process a single article
+- `GET /api/workflows/:type/:id`: Get workflow status by type and ID
+
+## Deployment Steps
+
+1. Update the KV namespace ID in wrangler.jsonc
+2. Set your API keys using Wrangler secrets:
+   ```
+   wrangler secret put GOOGLE_GENERATIVE_AI_API_KEY
+   wrangler secret put TELEGRAM_BOT_TOKEN
+   wrangler secret put TELEGRAM_CHANNEL_ID
+   ```
+3. Deploy with `npm run deploy` (make sure to have wrangler installed and configured)
+
+This implementation leverages Cloudflare Workflows' architecture and built-in features for a robust, serverless solution that automatically aggregates news, generates AI summaries, and distributes content to Telegram.

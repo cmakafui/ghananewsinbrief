@@ -4,20 +4,35 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ghana-news",
-	"main": "src/index.ts",
-	"compatibility_date": "2024-10-22",
+	"name": "gh-news-worker",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-04-20",
+	"compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 1
 	},
+	"kv_namespaces": [
+		{
+			"binding": "GH_NEWS_CACHE",
+			"id": "b519dec0d15c4a7fa88f1fec8d5c1fa9"
+		}
+	],
 	"workflows": [
 		{
-			"name": "workflows-starter",
-			"binding": "MY_WORKFLOW",
-			"class_name": "MyWorkflow"
+			"name": "gh-news-processor",
+			"binding": "GH_NEWS_PROCESSOR_WORKFLOW",
+			"class_name": "GHNewsProcessorWorkflow"
+		},
+		{
+			"name": "joy-news-scraper",
+			"binding": "JOY_NEWS_SCRAPER_WORKFLOW",
+			"class_name": "JoyNewsScraperWorkflow"
 		}
-	]
+	],
+	"triggers": {
+		"crons": ["*/10 * * * *"]
+	}
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
