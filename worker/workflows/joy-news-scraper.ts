@@ -6,6 +6,8 @@ import { Env, ScraperParams, Article } from '../types';
 import { getCurrentUTCDate } from '../utils';
 
 export class JoyNewsScraperWorkflow extends WorkflowEntrypoint<Env, ScraperParams> {
+	// Prefix for cache keys
+	private readonly CACHE_KEY_PREFIX = 'article:';
 	private readonly DEFAULT_MAIN_URL = 'https://www.myjoyonline.com/';
 	private readonly DEFAULT_FEED_URL = 'https://www.myjoyonline.com/feed/';
 
@@ -103,9 +105,6 @@ export class JoyNewsScraperWorkflow extends WorkflowEntrypoint<Env, ScraperParam
 	/**
 	 * Main workflow execution
 	 */
-	// Prefix for cache keys
-	private readonly CACHE_KEY_PREFIX = 'article:';
-
 	async run(event: WorkflowEvent<ScraperParams>, step: WorkflowStep) {
 		// Get URLs from parameters or use defaults
 		const mainUrl = event.payload?.main_url || this.DEFAULT_MAIN_URL;
@@ -141,15 +140,24 @@ export class JoyNewsScraperWorkflow extends WorkflowEntrypoint<Env, ScraperParam
 			}
 		);
 
-		// Step 3: Check which articles have already been processed
+		// Step 3: Check which articles have already been processed using bulk read
 		const processedArticles = await step.do('check_processed_articles', async () => {
 			const processed: Record<string, boolean> = {};
 
-			// Check each article in KV store with prefix
+			if (articleLinks.length === 0) {
+				return processed;
+			}
+
+			// Create array of cache keys with prefix
+			const cacheKeys = articleLinks.map((link) => `${this.CACHE_KEY_PREFIX}${link}`);
+
+			// Use bulk read to get all values at once (up to 100 keys)
+			const cachedValues = await this.env.GH_NEWS_CACHE.get(cacheKeys);
+
+			// Map results back to the original article links
 			for (const link of articleLinks) {
 				const cacheKey = `${this.CACHE_KEY_PREFIX}${link}`;
-				const isProcessed = (await this.env.GH_NEWS_CACHE.get(cacheKey)) !== null;
-				processed[link] = isProcessed;
+				processed[link] = cachedValues.get(cacheKey) !== null;
 			}
 
 			return processed;

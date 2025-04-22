@@ -6,6 +6,7 @@ import { summarizeArticle, sendTelegramMessage } from '../utils';
 export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorParams> {
 	// Prefix for cache keys
 	private readonly CACHE_KEY_PREFIX = 'article:';
+
 	async run(event: WorkflowEvent<ProcessorParams>, step: WorkflowStep) {
 		// Extract parameters
 		const { article, reprocess = false } = event.payload;
@@ -72,7 +73,16 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 					article.image_url ||
 					'https://images.unsplash.com/photo-1504711434969-e33886168f5c?ixlib=rb-4.0.3&q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=800&h=400&fit=crop';
 
-				return await sendTelegramMessage(this.env.TELEGRAM_BOT_TOKEN, this.env.TELEGRAM_CHANNEL_ID, telegramMessage, imageUrl, article.url);
+				// Use encodeURI to properly handle spaces and special characters
+				const encodedImageUrl = encodeURI(imageUrl);
+
+				return await sendTelegramMessage(
+					this.env.TELEGRAM_BOT_TOKEN,
+					this.env.TELEGRAM_CHANNEL_ID,
+					telegramMessage,
+					encodedImageUrl,
+					article.url
+				);
 			}
 		);
 
@@ -91,17 +101,6 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 				},
 			},
 			async () => {
-				// ✅ Double-check before writing to ensure idempotency
-				// This makes the step idempotent - even if it runs multiple times, we won't create
-				// duplicate entries or overwrite existing data unnecessarily
-				const cacheKey = `${this.CACHE_KEY_PREFIX}${article.url}`;
-				const existingRecord = await this.env.GH_NEWS_CACHE.get(cacheKey);
-				if (existingRecord !== null) {
-					// Already processed, no need to store again
-					console.log(`Article already marked as processed: ${article.url}`);
-					return { alreadyProcessed: true };
-				}
-
 				// Create metadata
 				const metadata = {
 					processed_at: new Date().toISOString(),
@@ -114,6 +113,8 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 				const ttl = 86400; // 24 hours * 60 minutes * 60 seconds
 
 				// Store in KV with TTL for automatic expiration
+				// We've already checked if it exists in step 1, so no need to check again
+				const cacheKey = `${this.CACHE_KEY_PREFIX}${article.url}`;
 				await this.env.GH_NEWS_CACHE.put(cacheKey, JSON.stringify(metadata), { expirationTtl: ttl });
 
 				return { success: true };
