@@ -68,21 +68,11 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 				timeout: '2 minutes',
 			},
 			async () => {
-				// Default image URL if not provided
-				const imageUrl =
-					article.image_url ||
-					'https://images.unsplash.com/photo-1504711434969-e33886168f5c?ixlib=rb-4.0.3&q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=800&h=400&fit=crop';
+				// Just use the image URL from the article or empty string if null/undefined
+				const imageUrl = article.image_url || '';
 
-				// Use encodeURI to properly handle spaces and special characters
-				const encodedImageUrl = encodeURI(imageUrl);
-
-				return await sendTelegramMessage(
-					this.env.TELEGRAM_BOT_TOKEN,
-					this.env.TELEGRAM_CHANNEL_ID,
-					telegramMessage,
-					encodedImageUrl,
-					article.url
-				);
+				// Let the sendTelegramMessage function handle fallback images
+				return await sendTelegramMessage(this.env.TELEGRAM_BOT_TOKEN, this.env.TELEGRAM_CHANNEL_ID, telegramMessage, imageUrl, article.url);
 			}
 		);
 

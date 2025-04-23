@@ -42,7 +42,7 @@ export async function sendTelegramMessage(
 	articleUrl: string
 ): Promise<boolean> {
 	try {
-		// Simply use encodeURI to properly handle spaces and special characters
+		// Properly encode the image URL to handle spaces and special characters
 		const encodedImageUrl = encodeURI(imageUrl);
 
 		// Create inline keyboard with article link
@@ -50,12 +50,43 @@ export async function sendTelegramMessage(
 			inline_keyboard: [[{ text: 'Read more', url: articleUrl }]],
 		};
 
-		// Prepare the request to Telegram API using ky
-		const result = await ky
+		// Try with the provided image
+		try {
+			const result = await ky
+				.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+					json: {
+						chat_id: channelId,
+						photo: encodedImageUrl,
+						caption: message,
+						parse_mode: 'HTML',
+						reply_markup: inlineKeyboard,
+					},
+					timeout: 30000,
+					retry: {
+						limit: 2,
+						methods: ['POST'],
+					},
+				})
+				.json<{ ok: boolean; description?: string }>();
+
+			if (result.ok) {
+				return true;
+			}
+
+			console.log('Using fallback image due to error:', result.description);
+		} catch (photoError) {
+			console.log('Using fallback image due to error:', photoError);
+		}
+
+		// If original image fails, try with the fallback image
+		const fallbackImageUrl =
+			'https://images.unsplash.com/photo-1504711434969-e33886168f5c?ixlib=rb-4.0.3&q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=800&h=400&fit=crop';
+
+		const fallbackResult = await ky
 			.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
 				json: {
 					chat_id: channelId,
-					photo: encodedImageUrl,
+					photo: fallbackImageUrl,
 					caption: message,
 					parse_mode: 'HTML',
 					reply_markup: inlineKeyboard,
@@ -68,8 +99,8 @@ export async function sendTelegramMessage(
 			})
 			.json<{ ok: boolean; description?: string }>();
 
-		if (!result.ok) {
-			console.error('Telegram API error:', result.description);
+		if (!fallbackResult.ok) {
+			console.error('Telegram fallback photo error:', fallbackResult.description);
 			return false;
 		}
 
