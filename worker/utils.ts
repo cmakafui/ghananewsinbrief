@@ -15,7 +15,7 @@ const ArticleSummarySchema = z.object({
 export async function summarizeArticle(content: string): Promise<string | null> {
 	try {
 		// Configure the Google Gemini model
-		const model = google('gemini-2.5-flash-preview-04-17');
+		const model = google('gemini-2.0-flash');
 
 		// Generate a summary of the article
 		const { object } = await generateObject({
