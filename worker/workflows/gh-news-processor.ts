@@ -30,7 +30,7 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 			}
 		}
 
-		// Step 2: Generate summary using Google Gemini
+		// Step 2: Generate summary using OpenAI
 		const summary = await step.do(
 			'generate_summary',
 			{

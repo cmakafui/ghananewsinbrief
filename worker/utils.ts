@@ -1,5 +1,5 @@
 // src/utils.ts
-import { google } from '@ai-sdk/google';
+import { openai } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import ky from 'ky';
@@ -10,12 +10,12 @@ const ArticleSummarySchema = z.object({
 });
 
 /**
- * Uses Google Gemini to summarize an article
+ * Uses OpenAI to summarize an article
  */
 export async function summarizeArticle(content: string): Promise<string | null> {
 	try {
-		// Configure the Google Gemini model
-		const model = google('gemini-2.0-flash');
+		// Configure the OpenAI model
+		const model = openai('gpt-4.1-mini');
 
 		// Generate a summary of the article
 		const { object } = await generateObject({
