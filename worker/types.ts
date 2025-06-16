@@ -7,6 +7,7 @@ export interface Env {
 	GH_NEWS_PROCESSOR_WORKFLOW: Workflow;
 	// API keys
 	GOOGLE_GENERATIVE_AI_API_KEY: string;
+	OPENAI_API_KEY: string;
 	TELEGRAM_BOT_TOKEN: string;
 	TELEGRAM_CHANNEL_ID: string;
 }
