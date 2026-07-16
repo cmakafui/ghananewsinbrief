@@ -1,8 +1,10 @@
 // src/scraper.ts
 import ky from 'ky';
 import { XMLParser } from 'fast-xml-parser';
+import { Client } from '@upstash/workflow';
 import { Env, ScraperParams, Article } from './types';
 import { getCurrentUTCDate } from './utils';
+import { OPENAI_FLOW_CONTROL } from './workflows/process-article';
 
 const CACHE_KEY_PREFIX = 'article:';
 const DEFAULT_MAIN_URL = 'https://www.myjoyonline.com/';
@@ -109,9 +111,10 @@ async function scrapeFeed(url: string): Promise<Record<string, any>> {
 
 /**
  * Scrapes Joy News, filters out already-processed articles via KV,
- * and spawns a processor workflow per new article.
+ * and triggers an Upstash Workflow run per new article. `origin` is the
+ * public base URL of this worker, used as the workflow callback destination.
  */
-export async function runScraper(env: Env, params: ScraperParams = {}): Promise<ScrapeResult> {
+export async function runScraper(env: Env, origin: string, params: ScraperParams = {}): Promise<ScrapeResult> {
 	const mainUrl = params.main_url || DEFAULT_MAIN_URL;
 	const feedUrl = params.feed_url || DEFAULT_FEED_URL;
 
@@ -151,19 +154,23 @@ export async function runScraper(env: Env, params: ScraperParams = {}): Promise<
 		});
 	}
 
-	// Trigger processing workflow for each new article
+	// Trigger a workflow run for each new article (batched in one QStash call)
 	let processors: ScrapeResult['processors'] = [];
 	if (articlesToProcess.length > 0) {
-		const batchData = articlesToProcess.map((article) => ({
-			id: crypto.randomUUID(),
-			params: { article },
-		}));
+		const client = new Client({ baseUrl: env.QSTASH_URL, token: env.QSTASH_TOKEN });
 
-		const instances = await env.GH_NEWS_PROCESSOR_WORKFLOW.createBatch(batchData);
+		const results = await client.trigger(
+			articlesToProcess.map((article) => ({
+				url: `${origin}/qstash/process-article`,
+				body: { article },
+				retries: 3,
+				flowControl: OPENAI_FLOW_CONTROL,
+			}))
+		);
 
-		processors = instances.map((instance, index) => ({
+		processors = results.map((run, index) => ({
 			url: articlesToProcess[index].url,
-			processor_id: instance.id,
+			processor_id: run.workflowRunId,
 			status: 'triggered',
 		}));
 	}

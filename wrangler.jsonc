@@ -18,15 +18,13 @@
 			"id": "b519dec0d15c4a7fa88f1fec8d5c1fa9"
 		}
 	],
-	"workflows": [
-		{
-			"name": "gh-news-processor",
-			"binding": "GH_NEWS_PROCESSOR_WORKFLOW",
-			"class_name": "GHNewsProcessorWorkflow"
-		}
-	],
+	// Orchestration lives in Upstash QStash: a QStash schedule POSTs
+	// /qstash/scrape every 3 hours, and per-article durability is an Upstash
+	// Workflow served at /qstash/process-article. No Cloudflare Workflows.
+	// Empty crons list is load-bearing: wrangler only removes a deployed cron
+	// trigger when the config explicitly declares none.
 	"triggers": {
-		"crons": ["0 */3 * * *"]
+		"crons": []
 	}
 	/**
 	 * Smart Placement
