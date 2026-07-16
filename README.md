@@ -1,79 +1,75 @@
-# Ghana News InBrief - Cloudflare Workflows Implementation
+# Ghana News InBrief
 
-This implementation uses Cloudflare Workflows to create a durable, multi-step news aggregation system while keeping dependencies lightweight.
+A serverless news pipeline that scrapes MyJoyOnline, summarizes new articles with OpenAI, and posts them to a Telegram channel. Compute runs on a Cloudflare Worker; all orchestration (scheduling, retries, durable multi-step execution) lives in Upstash QStash / Upstash Workflow.
 
-## Core Components
+## How It Works
 
-### 1. Workflow Structure
+1. **Schedule**: A QStash schedule POSTs `/qstash/scrape` every 3 hours (see `scripts/create-schedule.mjs`). There are no Cloudflare cron triggers — the empty `triggers.crons` list in `wrangler.jsonc` is deliberate and load-bearing.
+2. **Scrape** (`worker/scraper.ts`, runs inline in the request):
+   - Extracts article links from the MyJoyOnline homepage using Cloudflare's HTMLRewriter
+   - Parses the RSS feed with fast-xml-parser to get titles, summaries, and images
+   - Filters out already-processed articles via a bulk KV read (`article:` key prefix)
+   - Triggers one Upstash Workflow run per new article in a single batched QStash call
+3. **Process** (`worker/workflows/process-article.ts`, an Upstash Workflow): each step is a checkpointed `context.run` — QStash drives the steps via signed HTTP callbacks, so a retry resumes at the failed step instead of rerunning the whole pipeline:
+   - `check_if_processed`: idempotency re-check against KV (skippable with `reprocess: true`)
+   - `generate_summary`: two-paragraph summary via OpenAI `gpt-4.1-mini` (Vercel AI SDK, `generateObject`)
+   - `create_message`: builds the Telegram HTML caption — decodes WordPress-double-encoded entities, escapes HTML, and truncates to Telegram's 1024-char caption limit
+   - `send_telegram_message`: posts the photo + caption + "Read more" button to the channel, falling back to a stock image if the article image is rejected
+   - `mark_as_processed`: writes article metadata to KV with a 30-day TTL (must outlast how long an article can linger on the homepage, or it gets reposted)
 
-Two primary workflows handle the news processing pipeline:
+A shared flow-control key (`gh-news-openai`, parallelism 2) caps concurrent OpenAI calls across **all** runs, so a burst of new articles doesn't stampede the API.
 
-- **JoyNewsScraperWorkflow**: Scrapes the MyJoyOnline website and RSS feeds, identifies new articles, and triggers the processor workflow for each new article.
-- **GHNewsProcessorWorkflow**: Processes individual articles, generates summaries using Google Gemini, and sends them to Telegram.
+If a run exhausts its retries, a `failureFunction` logs the failure and DMs `TELEGRAM_ADMIN_CHAT_ID` (if configured); the run also lands in the QStash dead-letter queue.
 
-### 2. Key Technologies Used
+## Key Technologies
 
-- **Cloudflare HTMLRewriter**: Used for HTML parsing on the main page
-- **fast-xml-parser**: A lightweight XML parser for RSS feed processing
-- **ky**: A lightweight HTTP client for fetching content
-- **Cloudflare KV**: For storing processed article information with TTL (auto-expiration)
-- **Google Gemini API**: For AI-powered article summarization
-- **Cloudflare Workflows**: For durable, multi-step execution with automatic retries
-
-### 3. How It Works
-
-1. **Scraper Workflow**:
-
-   - Fetches article links from the MyJoyOnline page using HTMLRewriter
-   - Parses the RSS feed using fast-xml-parser
-   - Identifies unprocessed articles by checking KV storage with prefixed keys
-   - Triggers processor workflows for new articles using efficient batch processing
-
-2. **Processor Workflow**:
-   - Generates a summary for each article using Google Gemini
-   - Sends the article to Telegram with an image, summary, and link
-   - Stores the article in KV with prefixed keys and TTL for automatic expiration (1 day)
-
-### 4. Key Improvements
-
-- **Batch Processing**: Efficient creation of multiple processor workflows in a single API call
-- **Improved Caching**: KV storage with prefixed keys (`article:`) for better organization
-- **Idempotent Operations**: Enhanced checks to prevent duplicate processing
-- **Proper URL Encoding**: Using `encodeURI()` to handle spaces and special characters in image URLs
-- **Durability**: Reliable execution with automated retries for any failed steps
-- **Auto-expiring Storage**: KV with TTL instead of manual database cleanup
-- **Lightweight Dependencies**: Native APIs and small dependencies
-- **Scheduled Execution**: Built-in cron triggers for periodic scraping (every 10 minutes)
+- **Cloudflare Workers + Hono**: stateless HTTP host for the pipeline
+- **Upstash QStash / Workflow**: scheduling, retries, flow control, durable step execution, DLQ
+- **Cloudflare KV**: processed-article dedupe with TTL auto-expiration
+- **OpenAI (`gpt-4.1-mini`)** via the Vercel AI SDK: article summarization
+- **HTMLRewriter + fast-xml-parser + ky**: lightweight scraping stack
 
 ## File Structure
 
-1. **src/types.ts**: Type definitions for environment variables and workflow parameters
-2. **src/utils.ts**: Utility functions for article summarization, Telegram messaging, and date handling
-3. **src/workflows/joy-news-scraper.ts**: Implementation of the news scraper workflow with RSS parsing
-4. **src/workflows/gh-news-processor.ts**: Implementation of the article processor workflow
-5. **src/index.ts**: HTTP endpoints and scheduled triggers
-6. **wrangler.toml**: Cloudflare Workers configuration
-7. **package.json**: Project dependencies
+- `worker/index.ts`: Hono app — health endpoints and the two QStash-only routes
+- `worker/scraper.ts`: homepage + RSS scraping, KV dedupe, workflow fan-out
+- `worker/workflows/process-article.ts`: per-article Upstash Workflow (summarize → format → send → mark processed)
+- `worker/utils.ts`: OpenAI summarization, Telegram caption building/escaping, Telegram send with image fallback
+- `worker/types.ts`: `Env` bindings and workflow parameter types
+- `scripts/create-schedule.mjs`: creates/updates the QStash scrape schedule (idempotent via a stable schedule ID)
+- `wrangler.jsonc`: Cloudflare Workers configuration
 
-## API Endpoints
+## Endpoints
 
-(Current endpoints do not support authentication, but this can be added as needed)
+- `GET /`: service name
+- `GET /health`: health check
+- `POST /qstash/scrape`: scrape entry point — **requires a valid QStash signature** (invoked by the schedule, or by a manual signed publish)
+- `POST /qstash/process-article`: Upstash Workflow endpoint for the per-article processor — `serve()` verifies QStash signatures itself
 
-- `GET /`: Root endpoint displaying service name
-- `GET /health`: Health check endpoint
-- `POST /api/workflows/scraper`: Manually trigger the news scraper workflow
-- `POST /api/workflows/processor`: Manually process a single article
-- `GET /api/workflows/:type/:id`: Get workflow status by type and ID
+Nothing mutating is publicly triggerable; both POST routes only accept signed QStash deliveries.
 
-## Deployment Steps
+## Configuration
 
-1. Update the KV namespace ID in wrangler.jsonc
-2. Set your API keys using Wrangler secrets:
+Environment (Wrangler secrets):
+
+```
+wrangler secret put OPENAI_API_KEY
+wrangler secret put TELEGRAM_BOT_TOKEN
+wrangler secret put TELEGRAM_CHANNEL_ID
+wrangler secret put QSTASH_URL                  # region endpoint, e.g. https://qstash.upstash.io
+wrangler secret put QSTASH_TOKEN
+wrangler secret put QSTASH_CURRENT_SIGNING_KEY
+wrangler secret put QSTASH_NEXT_SIGNING_KEY
+wrangler secret put TELEGRAM_ADMIN_CHAT_ID      # optional: DM target for permanent-failure alerts
+```
+
+KV: update the `GH_NEWS_CACHE` namespace ID in `wrangler.jsonc` to your own.
+
+## Deployment
+
+1. Set the secrets above and the KV namespace ID
+2. Deploy the worker: `npm run deploy`
+3. Create the scrape schedule (re-runnable; updates in place):
    ```
-   wrangler secret put GOOGLE_GENERATIVE_AI_API_KEY
-   wrangler secret put TELEGRAM_BOT_TOKEN
-   wrangler secret put TELEGRAM_CHANNEL_ID
+   node scripts/create-schedule.mjs https://gh-news-worker.<subdomain>.workers.dev
    ```
-3. Deploy with `npm run deploy` (make sure to have wrangler installed and configured)
-
-This implementation leverages Cloudflare Workflows' architecture and built-in features for a robust, serverless solution that automatically aggregates news, generates AI summaries, and distributes content to Telegram.
