@@ -32,6 +32,53 @@ export async function summarizeArticle(content: string): Promise<string | null> 
 }
 
 /**
+ * Decodes HTML entities that survive the feed parse (WordPress double-encodes
+ * titles, e.g. "&#8211;"), so they render as characters instead of raw text.
+ */
+export function decodeHtmlEntities(text: string): string {
+	return text
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&nbsp;/g, ' ');
+}
+
+/**
+ * Escapes text for use inside Telegram HTML parse mode
+ */
+export function escapeTelegramHtml(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Telegram rejects sendPhoto captions longer than 1024 characters (counted
+// after entity parsing), so budget on the visible text, not the HTML tags.
+const TELEGRAM_CAPTION_LIMIT = 1024;
+
+/**
+ * Builds the Telegram HTML caption for an article, truncating the summary
+ * so the visible text stays within Telegram's caption limit.
+ */
+export function buildTelegramCaption(rawTitle: string, rawSummary: string): string {
+	const title = decodeHtmlEntities(rawTitle);
+	const summary = decodeHtmlEntities(rawSummary);
+
+	const emoji = '📰';
+	const overhead = `${emoji} \n\n`.length;
+	const maxSummaryLength = TELEGRAM_CAPTION_LIMIT - overhead - title.length;
+
+	let visibleSummary = summary;
+	if (visibleSummary.length > maxSummaryLength) {
+		visibleSummary = visibleSummary.slice(0, Math.max(0, maxSummaryLength - 1)).trimEnd() + '…';
+	}
+
+	return `${emoji} <b>${escapeTelegramHtml(title)}</b>\n\n<i>${escapeTelegramHtml(visibleSummary)}</i>`;
+}
+
+/**
  * Sends a message to a Telegram channel using ky
  */
 export async function sendTelegramMessage(

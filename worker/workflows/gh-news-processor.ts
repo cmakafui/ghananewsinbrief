@@ -1,7 +1,7 @@
 // src/workflows/gh-news-processor.ts
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import { Env, ProcessorParams } from '../types';
-import { summarizeArticle, sendTelegramMessage } from '../utils';
+import { summarizeArticle, sendTelegramMessage, buildTelegramCaption } from '../utils';
 
 export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorParams> {
 	// Prefix for cache keys
@@ -51,9 +51,10 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 		}
 
 		// Step 3: Create the message for Telegram
+		// Escapes HTML and truncates to Telegram's 1024-char caption limit —
+		// oversized/unescaped captions are rejected with a 400 that no retry fixes
 		const telegramMessage = await step.do('create_message', async () => {
-			const emoji = '📰';
-			return `${emoji} <b>${article.title}</b>\n\n<i>${summary}</i>`;
+			return buildTelegramCaption(article.title, summary);
 		});
 
 		// Step 4: Send message to Telegram
@@ -80,7 +81,7 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 			throw new Error(`Failed to send Telegram message for article: ${article.url}`);
 		}
 
-		// Step 5: Mark article as processed in KV with TTL (1 day)
+		// Step 5: Mark article as processed in KV with TTL (30 days)
 		await step.do(
 			'mark_as_processed',
 			{
@@ -99,8 +100,9 @@ export class GHNewsProcessorWorkflow extends WorkflowEntrypoint<Env, ProcessorPa
 					summary: summary,
 				};
 
-				// Calculate TTL (1 day in seconds)
-				const ttl = 86400; // 24 hours * 60 minutes * 60 seconds
+				// Calculate TTL (30 days in seconds) — must outlast how long an
+				// article can linger on the homepage/feed, or it gets reprocessed
+				const ttl = 30 * 86400;
 
 				// Store in KV with TTL for automatic expiration
 				// We've already checked if it exists in step 1, so no need to check again

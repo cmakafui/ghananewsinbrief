@@ -4,11 +4,11 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { Env, ScraperParams } from './types';
-import { JoyNewsScraperWorkflow } from './workflows/joy-news-scraper';
 import { GHNewsProcessorWorkflow } from './workflows/gh-news-processor';
+import { runScraper } from './scraper';
 
 // Export the workflows for Cloudflare Workers
-export { JoyNewsScraperWorkflow, GHNewsProcessorWorkflow };
+export { GHNewsProcessorWorkflow };
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -23,23 +23,20 @@ app.get('/', (c) => c.text('GHNewsInBrief Workflows Service'));
 // Health check endpoint
 app.get('/health', (c) => c.text('GHNewsInBrief Workflows service ready'));
 
-// Start scraper workflow
+// Run the scraper (executes inline and spawns processor workflows for new articles)
 app.post('/api/workflows/scraper', async (c) => {
 	try {
 		const body = await c.req.json<ScraperParams>().catch(() => ({}));
 
-		const instance = await c.env.JOY_NEWS_SCRAPER_WORKFLOW.create({
-			id: crypto.randomUUID(),
-			params: body,
-		});
+		const result = await runScraper(c.env, body);
 
 		return c.json({
 			success: true,
-			workflow_id: instance.id,
-			message: 'News scraper workflow started',
+			message: 'News scraper run complete',
+			result,
 		});
 	} catch (error) {
-		console.error('Error starting scraper workflow:', error);
+		console.error('Error running scraper:', error);
 		return c.json(
 			{
 				success: false,
@@ -116,15 +113,13 @@ app.get('/api/workflows/:type/:id', async (c) => {
 
 		let instance;
 
-		if (type === 'scraper') {
-			instance = await c.env.JOY_NEWS_SCRAPER_WORKFLOW.get(id);
-		} else if (type === 'processor') {
+		if (type === 'processor') {
 			instance = await c.env.GH_NEWS_PROCESSOR_WORKFLOW.get(id);
 		} else {
 			return c.json(
 				{
 					success: false,
-					error: 'Invalid workflow type. Use "scraper" or "processor"',
+					error: 'Invalid workflow type. Only "processor" is supported (the scraper runs inline, not as a workflow)',
 				},
 				400
 			);
@@ -167,12 +162,11 @@ export default {
 	// Run scraper every 3 hours
 	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
 		try {
-			const instance = await env.JOY_NEWS_SCRAPER_WORKFLOW.create({
-				id: crypto.randomUUID(),
-			});
-			console.log('Scheduled news scraping started:', {
-				instanceId: instance.id,
-				timestamp: new Date().toISOString(),
+			const result = await runScraper(env);
+			console.log('Scheduled news scraping complete:', {
+				total_links: result.total_links,
+				total_processed: result.total_processed,
+				timestamp: result.timestamp,
 			});
 		} catch (error) {
 			console.error('Error in scheduled scraping:', error);

@@ -23,15 +23,10 @@
 			"name": "gh-news-processor",
 			"binding": "GH_NEWS_PROCESSOR_WORKFLOW",
 			"class_name": "GHNewsProcessorWorkflow"
-		},
-		{
-			"name": "joy-news-scraper",
-			"binding": "JOY_NEWS_SCRAPER_WORKFLOW",
-			"class_name": "JoyNewsScraperWorkflow"
 		}
 	],
 	"triggers": {
-		"crons": ["*/10 * * * *"]
+		"crons": ["0 */3 * * *"]
 	}
 	/**
 	 * Smart Placement
